@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, createContext, useContext } from 'react'
 import './App.css'
 import {
   CheckCircle2, AlertCircle, MapPin, Upload, User,
@@ -131,64 +131,27 @@ function getStepIndex(screen: Screen): number {
   return 0
 }
 
-function App() {
-  const [screen, setScreen] = useState<Screen>('cookies')
-  const [state, setState] = useState<AppState>(initialState)
-  const [scenarios, setScenarios] = useState<ScenarioConfig>(defaultScenarios)
-  const [showScenarios, setShowScenarios] = useState(false)
-  const [showExitModal, setShowExitModal] = useState(false)
-  const [curpAttempts, setCurpAttempts] = useState(0)
-  const [idvAttempts, setIdvAttempts] = useState(0)
-  const [docAttempts, setDocAttempts] = useState(0)
-  const [_signTimer] = useState(30)
-  void _signTimer
-  const [history, setHistory] = useState<Screen[]>([])
+/* ─── Shared context for Shell and child components ─── */
+interface ShellCtxType {
+  showScenarios: boolean;
+  setShowScenarios: (v: boolean) => void;
+  scenarios: ScenarioConfig;
+  setScenarios: (s: ScenarioConfig) => void;
+  goBack: () => void;
+  currentStep: number;
+  showExitModal: boolean;
+  setShowExitModal: (v: boolean) => void;
+  resetAll: () => void;
+}
 
-  // Temp form fields
-  const [tempCurp, setTempCurp] = useState('')
-  const [tempPhone, setTempPhone] = useState('')
-  const [tempOtp, setTempOtp] = useState('')
-  const [tempBen, setTempBen] = useState<Beneficiary>({
-    name: '', paternalSurname: '', maternalSurname: '', dob: '', rfc: '', percentage: 0
-  })
-  const [tempSearch, setTempSearch] = useState('')
+const ShellCtx = createContext<ShellCtxType>(null!)
 
-  const navigate = useCallback((next: Screen) => {
-    setHistory(h => [...h, screen])
-    setScreen(next)
-  }, [screen])
-
-  const goBack = useCallback(() => {
-    if (history.length > 0) {
-      const prev = history[history.length - 1]
-      setHistory(h => h.slice(0, -1))
-      setScreen(prev)
-    }
-  }, [history])
-
-  const resetAll = useCallback(() => {
-    setState(initialState)
-    setScreen('cookies')
-    setHistory([])
-    setCurpAttempts(0)
-    setIdvAttempts(0)
-    setDocAttempts(0)
-    setShowExitModal(false)
-  }, [])
-
-  const currentStep = getStepIndex(screen)
-
-  // Auto-advance from doc-extracting after 2s (must be top-level hook)
-  useEffect(() => {
-    if (screen !== 'doc-extracting') return
-    const t = setTimeout(() => navigate('doc-confirm'), 2000)
-    return () => clearTimeout(t)
-  }, [screen, navigate])
-
-  /* ─── Phone wrapper ─── */
-  const Shell = ({ children, title, showBack, showProgress }: {
-    children: React.ReactNode; title?: string; showBack?: boolean; showProgress?: boolean;
-  }) => (
+/* ─── Phone wrapper (stable component outside App) ─── */
+function Shell({ children, title, showBack, showProgress }: {
+  children: React.ReactNode; title?: string; showBack?: boolean; showProgress?: boolean;
+}) {
+  const { showScenarios, setShowScenarios, scenarios, setScenarios, goBack, currentStep, showExitModal, setShowExitModal, resetAll } = useContext(ShellCtx)
+  return (
     <div className="min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center p-2 sm:p-4">
       {/* Scenario toggle */}
       <button
@@ -282,28 +245,31 @@ function App() {
       )}
     </div>
   )
+}
 
-  const RedButton = ({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) => (
-    <button onClick={onClick} disabled={disabled}
-      className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold hover:bg-red-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed text-sm">
-      {children}
-    </button>
-  )
+const RedButton = ({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) => (
+  <button onClick={onClick} disabled={disabled}
+    className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold hover:bg-red-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed text-sm">
+    {children}
+  </button>
+)
 
-  const OutlineButton = ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
-    <button onClick={onClick}
-      className="w-full border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:border-red-600 hover:text-red-600 transition text-sm">
-      {children}
-    </button>
-  )
+const OutlineButton = ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
+  <button onClick={onClick}
+    className="w-full border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:border-red-600 hover:text-red-600 transition text-sm">
+    {children}
+  </button>
+)
 
-  const LinkButton = ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
-    <button onClick={onClick} className="w-full text-red-600 py-2 font-semibold hover:underline text-sm">
-      {children}
-    </button>
-  )
+const LinkButton = ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
+  <button onClick={onClick} className="w-full text-red-600 py-2 font-semibold hover:underline text-sm">
+    {children}
+  </button>
+)
 
-  const BlockScreen = ({ title, message, onExit }: { title: string; message: string; onExit?: () => void }) => (
+function BlockScreen({ title, message, onExit }: { title: string; message: string; onExit?: () => void }) {
+  const { setShowExitModal } = useContext(ShellCtx)
+  return (
     <Shell showBack>
       <div className="p-5 space-y-6 flex flex-col items-center text-center pt-10">
         <AlertCircle className="w-16 h-16 text-red-600" />
@@ -316,10 +282,74 @@ function App() {
       </div>
     </Shell>
   )
+}
+
+function App() {
+  const [screen, setScreen] = useState<Screen>('cookies')
+  const [state, setState] = useState<AppState>(initialState)
+  const [scenarios, setScenarios] = useState<ScenarioConfig>(defaultScenarios)
+  const [showScenarios, setShowScenarios] = useState(false)
+  const [showExitModal, setShowExitModal] = useState(false)
+  const [curpAttempts, setCurpAttempts] = useState(0)
+  const [idvAttempts, setIdvAttempts] = useState(0)
+  const [docAttempts, setDocAttempts] = useState(0)
+  const [_signTimer] = useState(30)
+  void _signTimer
+  const [history, setHistory] = useState<Screen[]>([])
+
+  // Temp form fields
+  const [tempCurp, setTempCurp] = useState('')
+  const [tempPhone, setTempPhone] = useState('')
+  const [tempOtp, setTempOtp] = useState('')
+  const [tempBen, setTempBen] = useState<Beneficiary>({
+    name: '', paternalSurname: '', maternalSurname: '', dob: '', rfc: '', percentage: 0
+  })
+  const [tempSearch, setTempSearch] = useState('')
+
+  const navigate = useCallback((next: Screen) => {
+    setHistory(h => [...h, screen])
+    setScreen(next)
+  }, [screen])
+
+  const goBack = useCallback(() => {
+    if (history.length > 0) {
+      const prev = history[history.length - 1]
+      setHistory(h => h.slice(0, -1))
+      setScreen(prev)
+    }
+  }, [history])
+
+  const resetAll = useCallback(() => {
+    setState(initialState)
+    setScreen('cookies')
+    setHistory([])
+    setCurpAttempts(0)
+    setIdvAttempts(0)
+    setDocAttempts(0)
+    setShowExitModal(false)
+  }, [])
+
+  const currentStep = getStepIndex(screen)
+
+  // Auto-advance from doc-extracting after 2s (must be top-level hook)
+  useEffect(() => {
+    if (screen !== 'doc-extracting') return
+    const t = setTimeout(() => navigate('doc-confirm'), 2000)
+    return () => clearTimeout(t)
+  }, [screen, navigate])
+
+  const shellCtxValue: ShellCtxType = {
+    showScenarios, setShowScenarios,
+    scenarios, setScenarios,
+    goBack, currentStep,
+    showExitModal, setShowExitModal, resetAll,
+  }
 
   /* ═══════════════════════════════════
        SCREENS
   ═══════════════════════════════════ */
+
+  const renderScreen = (): JSX.Element => {
 
   // ── COOKIES ──
   if (screen === 'cookies') {
@@ -1553,6 +1583,13 @@ function App() {
         <RedButton onClick={resetAll}>Reiniciar</RedButton>
       </div>
     </Shell>
+  )
+  } // end renderScreen
+
+  return (
+    <ShellCtx.Provider value={shellCtxValue}>
+      {renderScreen()}
+    </ShellCtx.Provider>
   )
 }
 
