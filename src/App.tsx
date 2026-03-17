@@ -5,6 +5,23 @@ import {
   Building2, CreditCard, FileCheck, ChevronLeft, X, Search,
   Eye, Shield, Clock, Loader2
 } from 'lucide-react'
+import {
+  validateWatchlistScreening,
+  evaluateFraud,
+  retrieveEconomicActivities,
+  uploadDocument,
+  getDistricts,
+  searchServicePoints,
+  composeDocument,
+  createCustomer,
+  createAccount,
+  createCard,
+  createContactPoint,
+  calculateKycRiskScore,
+  unblockChannel,
+  getCountries,
+  getPartyParameters,
+} from './services/api'
 
 /* ─── Types ─── */
 type Screen =
@@ -48,11 +65,15 @@ interface AppState {
   hasForeignTax: boolean | null;
   fiscalUploaded: boolean; domicilioUploaded: boolean;
   extractedRegimen: string; extractedActivity: string; extractedAddress: string;
-  selectedBranch: string;
+  extractedPostalCode: string; extractedState: string; extractedDistrict: string;
+  selectedBranch: string; selectedBranchId: string;
   cardAddress: string;
   beneficiaries: Beneficiary[];
   efirmaUploaded: boolean; manualSigned: boolean;
   eligible: boolean;
+  customerId: string; accountId: string; agreementId: string;
+  geoLat: number; geoLng: number;
+  apiLog: { screen: string; api: string; data: unknown; response?: unknown }[];
 }
 
 const initialState: AppState = {
@@ -71,11 +92,15 @@ const initialState: AppState = {
   hasForeignTax: null,
   fiscalUploaded: false, domicilioUploaded: false,
   extractedRegimen: '', extractedActivity: '', extractedAddress: '',
-  selectedBranch: '',
+  extractedPostalCode: '', extractedState: '', extractedDistrict: '',
+  selectedBranch: '', selectedBranchId: '',
   cardAddress: '',
   beneficiaries: [],
   efirmaUploaded: false, manualSigned: false,
   eligible: false,
+  customerId: '', accountId: '', agreementId: '',
+  geoLat: 19.4326, geoLng: -99.1332,
+  apiLog: [],
 }
 
 /* ─── Simulated scenarios toggle panel ─── */
@@ -305,6 +330,17 @@ function App() {
     name: '', paternalSurname: '', maternalSurname: '', dob: '', rfc: '', percentage: 0
   })
   const [tempSearch, setTempSearch] = useState('')
+  const [apiLoading, setApiLoading] = useState(false)
+  const [branchResults, setBranchResults] = useState<{name:string;addr:string;dist:string;id:string}[]>([])
+  const [economicResults, setEconomicResults] = useState<{code:string;description:string}[]>([])
+  const [countryList, setCountryList] = useState<{code:string;name:string}[]>([])
+  const [civilStatusList, setCivilStatusList] = useState<{code:string;description:string}[]>([])
+
+  // Helper to log API calls
+  const logApi = useCallback((screen: string, api: string, data: unknown, response?: unknown) => {
+    console.log(`[API-LOG] Screen: ${screen} | API: ${api}`, { data, response })
+    setState(prev => ({ ...prev, apiLog: [...prev.apiLog, { screen, api, data, response }] }))
+  }, [])
 
   const navigate = useCallback((next: Screen) => {
     setHistory(h => [...h, screen])
@@ -327,9 +363,23 @@ function App() {
     setIdvAttempts(0)
     setDocAttempts(0)
     setShowExitModal(false)
+    setBranchResults([])
+    setEconomicResults([])
   }, [])
 
   const currentStep = getStepIndex(screen)
+
+  // Load catalogs on mount: Countries + Party Parameters (civil_status)
+  useEffect(() => {
+    getCountries().then((res: unknown) => {
+      const data = res as { code?: string; name?: string }[] | undefined
+      if (Array.isArray(data)) setCountryList(data.map((c: { code?: string; name?: string }) => ({ code: c.code || '', name: c.name || '' })))
+    }).catch(() => { /* catalog unavailable */ })
+    getPartyParameters('civil_status').then((res: unknown) => {
+      const data = res as { code?: string; description?: string }[] | undefined
+      if (Array.isArray(data)) setCivilStatusList(data.map((c: { code?: string; description?: string }) => ({ code: c.code || '', description: c.description || '' })))
+    }).catch(() => { /* catalog unavailable */ })
+  }, [])
 
   // Auto-advance from doc-extracting after 2s (must be top-level hook)
   useEffect(() => {
@@ -545,7 +595,7 @@ function App() {
               actividades económicas en México.
             </p>
           </div>
-          <RedButton disabled={tempCurp.length !== 18} onClick={() => {
+          <RedButton disabled={tempCurp.length !== 18 || apiLoading} onClick={async () => {
             if (curpAttempts >= 2 && !scenarios.curpValid) {
               navigate('curp-max-block')
               return
@@ -571,7 +621,7 @@ function App() {
               extractedNationality: 'Mexicana',
             })
             navigate('curp-data')
-          }}>Continuar</RedButton>
+          }}>{apiLoading ? 'Procesando...' : 'Continuar'}</RedButton>
         </div>
       </Shell>
     )
@@ -624,7 +674,44 @@ function App() {
               </div>
             ))}
           </div>
-          <RedButton onClick={() => navigate('terms')}>Confirmar</RedButton>
+          <RedButton disabled={apiLoading} onClick={async () => {
+            // Call Watchlist Screening API with person data from CURP
+            setApiLoading(true)
+            const nameParts = state.extractedName.split(' ')
+            const watchlistData = {
+              operationTypeCode: '01',
+              operationSubtypeCode: '01',
+              idempotentReference: `AML-OBD-${Date.now()}`,
+              person: {
+                personName: {
+                  givenName: nameParts[0] || '',
+                  lastName: nameParts[1] || '',
+                  secondLastName: nameParts[2] || '',
+                  fullName: state.extractedName,
+                },
+                documents: [{ documentTypeCode: 'CU', documentNumber: state.curp }],
+                birthDate: state.extractedDob.split('/').reverse().join('-'),
+                placeOfBirth: { country: { code: '052' } },
+                nationality: { code: '052' },
+                employment: { economicActivity: { code: '', description: '' } },
+              },
+              organization: {
+                documents: [],
+                typeCode: 'PFAE',
+                organizationName: { legalName: state.extractedName },
+                economicActivity: { code: '', description: '' },
+              },
+              contactPoints: [],
+            }
+            try {
+              const res = await validateWatchlistScreening(watchlistData)
+              logApi('curp-data', 'POST /api/watchlist-screening/validate-status', watchlistData, res)
+            } catch (err) {
+              logApi('curp-data', 'POST /api/watchlist-screening/validate-status', watchlistData, { error: String(err) })
+            }
+            setApiLoading(false)
+            navigate('terms')
+          }}>{apiLoading ? 'Validando...' : 'Confirmar'}</RedButton>
         </div>
       </Shell>
     )
@@ -707,10 +794,27 @@ function App() {
               <p className="text-xs text-red-600 mt-1">El formato del número no es correcto</p>
             )}
           </div>
-          <RedButton disabled={tempPhone.length < 10} onClick={() => {
+          <RedButton disabled={tempPhone.length < 10 || apiLoading} onClick={async () => {
+            setApiLoading(true)
             setState({...state, phone: tempPhone})
+            // Call Fraud Evaluation API with phone number
+            const fraudData = {
+              party: {
+                contactPoint: {
+                  electronicAddress: { emailAddress: '' },
+                  phoneAddress: { phoneNumber: tempPhone, countryCode: '52' },
+                },
+              },
+            }
+            try {
+              const res = await evaluateFraud(fraudData)
+              logApi('phone-input', 'POST /api/fraud/evaluate', fraudData, res)
+            } catch (err) {
+              logApi('phone-input', 'POST /api/fraud/evaluate', fraudData, { error: String(err) })
+            }
+            setApiLoading(false)
             navigate('otp-input')
-          }}>Enviar código de verificación</RedButton>
+          }}>{apiLoading ? 'Verificando...' : 'Enviar código de verificación'}</RedButton>
         </div>
       </Shell>
     )
@@ -901,7 +1005,23 @@ function App() {
             <div className="flex gap-2">
               <button onClick={() => navigate('restricted-block')}
                 className="flex-1 border-2 border-gray-300 py-2 rounded-lg text-sm font-semibold hover:border-red-600">Sí</button>
-              <button onClick={() => navigate('idv-guide')}
+              <button onClick={async () => {
+                // Call Economic Activities API to search by activity description
+                if (state.sourceOfFunds) {
+                  setApiLoading(true)
+                  const ecoData = { hierarchyEconomicActivity: { economicActivityDescription: 'SERVICIOS' } }
+                  try {
+                    const res = await retrieveEconomicActivities(ecoData)
+                    logApi('business-info', 'POST /api/economic-activities/retrieve', ecoData, res)
+                    const arr = res as { code?: string; description?: string }[] | undefined
+                    if (Array.isArray(arr)) setEconomicResults(arr.map((a: { code?: string; description?: string }) => ({ code: a.code || '', description: a.description || '' })))
+                  } catch (err) {
+                    logApi('business-info', 'POST /api/economic-activities/retrieve', ecoData, { error: String(err) })
+                  }
+                  setApiLoading(false)
+                }
+                navigate('idv-guide')
+              }}
                 className="flex-1 border-2 border-gray-300 py-2 rounded-lg text-sm font-semibold hover:border-red-600">No</button>
             </div>
           </div>
@@ -1036,17 +1156,41 @@ function App() {
                 <Upload className="w-10 h-10 text-gray-400 mx-auto" />
                 <p className="font-semibold text-sm">Constancia de Situación Fiscal</p>
                 <p className="text-xs text-gray-500">Max: 10MB | Formato: .pdf, .jpg o .png</p>
-                <button onClick={() => {
+                <button onClick={async () => {
                   if (docAttempts >= 2 && !scenarios.docUploadSuccess) {
                     navigate('doc-max-block')
                   } else if (!scenarios.docUploadSuccess) {
                     setDocAttempts(a => a + 1)
                     navigate('doc-error')
                   } else {
+                    // Call Document Management API for Constancia Fiscal
+                    setApiLoading(true)
+                    const docData = {
+                      document: {
+                        mimeType: 'application/pdf',
+                        name: 'constancia_fiscal.pdf',
+                        typeCode: 'CONST',
+                        folderReference: crypto.randomUUID(),
+                        owners: [{ ownerId: state.curp || 'PENDING' }],
+                        documentProperties: [
+                          { key: 'usuario', value: 'onboarding-web' },
+                          { key: 'tipoOperacion', value: 'ALTA' },
+                          { key: 'folio', value: `FOL-${Date.now()}` },
+                        ],
+                      },
+                      caller_information: { appId: 'onboarding-pj', name: 'Onboarding PJ Web' },
+                    }
+                    try {
+                      const res = await uploadDocument(docData)
+                      logApi('doc-upload', 'POST /api/document-management/upload', docData, res)
+                    } catch (err) {
+                      logApi('doc-upload', 'POST /api/document-management/upload', docData, { error: String(err) })
+                    }
+                    setApiLoading(false)
                     navigate('doc-extracting')
                   }
                 }} className="bg-red-600 text-white px-6 py-2 rounded-lg text-sm font-semibold hover:bg-red-700">
-                  Subir documento
+                  {apiLoading ? 'Subiendo...' : 'Subir documento'}
                 </button>
               </>
             )}
@@ -1111,10 +1255,29 @@ function App() {
               </div>
             ))}
           </div>
-          <RedButton onClick={() => {
-            setState({...state, fiscalUploaded: true})
+          <RedButton disabled={apiLoading} onClick={async () => {
+            // Call Administrative Geographies API with postal code from extracted address
+            setApiLoading(true)
+            const postCode = '06600'
+            try {
+              const res = await getDistricts('052', postCode)
+              logApi('doc-confirm', 'GET /api/administrative-geographies/districts', { country_code: '052', post_code: postCode }, res)
+            } catch (err) {
+              logApi('doc-confirm', 'GET /api/administrative-geographies/districts', { country_code: '052', post_code: postCode }, { error: String(err) })
+            }
+            setApiLoading(false)
+            setState({
+              ...state,
+              fiscalUploaded: true,
+              extractedRegimen: 'Persona Física con Actividad Empresarial',
+              extractedActivity: 'Comercio al por menor',
+              extractedAddress: 'Calle Reforma #123, Interior 4B, Colonia Juárez, 06600, Ciudad de México, CDMX',
+              extractedPostalCode: postCode,
+              extractedState: 'CDMX',
+              extractedDistrict: 'Juárez',
+            })
             navigate('doc-upload')
-          }}>Confirmar</RedButton>
+          }}>{apiLoading ? 'Validando dirección...' : 'Confirmar'}</RedButton>
           <LinkButton onClick={() => navigate('doc-upload')}>Estos datos son incorrectos</LinkButton>
         </div>
       </Shell>
@@ -1161,13 +1324,41 @@ function App() {
 
   // ── PERSONALIZATION ──
   if (screen === 'branch-search') {
-    const branches = [
-      { name: 'Banco Santander', addr: 'Plaza Santa Bárbara, 16', dist: '10 m' },
-      { name: 'Santander Private Banking', addr: 'Gran Vía, 899', dist: '300 m' },
-      { name: 'Banco Santander', addr: 'Avenida Reforma, 74', dist: '873 m' },
-      { name: 'Banco Santander', addr: 'Paseo de la Reforma, 578', dist: '1.4 km' },
-      { name: 'Banco Santander', addr: 'Calle Monterrey, 43', dist: '873 m' },
+    const fallbackBranches = [
+      { name: 'Banco Santander', addr: 'Plaza Santa Bárbara, 16', dist: '10 m', id: '0014' },
+      { name: 'Santander Private Banking', addr: 'Gran Vía, 899', dist: '300 m', id: '0021' },
+      { name: 'Banco Santander', addr: 'Avenida Reforma, 74', dist: '873 m', id: '0033' },
+      { name: 'Banco Santander', addr: 'Paseo de la Reforma, 578', dist: '1.4 km', id: '0045' },
+      { name: 'Banco Santander', addr: 'Calle Monterrey, 43', dist: '873 m', id: '0056' },
     ]
+    const displayBranches = branchResults.length > 0 ? branchResults : fallbackBranches
+
+    const handleSearchBranches = async () => {
+      setApiLoading(true)
+      const searchData = {
+        startCoordinates: { latitude: state.geoLat, longitude: state.geoLng },
+        endCoordinates: { latitude: state.geoLat + 0.05, longitude: state.geoLng + 0.05 },
+        radius: { unitCode: 'KM', value: 5 },
+        servicePointTypes: [{ servicePointTypeCode: 'BRANCH' }],
+      }
+      try {
+        const res = await searchServicePoints(searchData)
+        logApi('branch-search', 'POST /api/service-points/search-by-geolocation', searchData, res)
+        const arr = res as { name?: string; address?: string; distance?: string; id?: string }[] | undefined
+        if (Array.isArray(arr)) {
+          setBranchResults(arr.map((b: { name?: string; address?: string; distance?: string; id?: string }) => ({
+            name: b.name || 'Banco Santander',
+            addr: b.address || '',
+            dist: b.distance || '',
+            id: b.id || '0014',
+          })))
+        }
+      } catch (err) {
+        logApi('branch-search', 'POST /api/service-points/search-by-geolocation', searchData, { error: String(err) })
+      }
+      setApiLoading(false)
+    }
+
     return (
       <Shell title="Personalización" showBack showProgress>
         <div className="p-5 space-y-4">
@@ -1185,8 +1376,13 @@ function App() {
             <input type="text" value={tempSearch} onChange={e => setTempSearch(e.target.value)}
               placeholder="Busca por dirección, ciudad o código postal"
               className="w-full border-2 border-gray-300 rounded-lg pl-9 pr-3 py-2.5 text-sm focus:border-red-600 focus:outline-none"
+              onKeyDown={e => { if (e.key === 'Enter') handleSearchBranches() }}
             />
           </div>
+          <button onClick={handleSearchBranches} disabled={apiLoading}
+            className="w-full bg-gray-100 text-gray-700 py-2 rounded-lg text-sm font-semibold hover:bg-gray-200 disabled:opacity-50">
+            {apiLoading ? 'Buscando sucursales...' : 'Buscar sucursales cercanas'}
+          </button>
           {/* Map placeholder */}
           <div className="w-full h-32 bg-gray-200 rounded-lg flex items-center justify-center">
             <MapPin className="w-8 h-8 text-red-600" />
@@ -1194,9 +1390,9 @@ function App() {
           </div>
           <p className="text-xs font-semibold text-gray-500 uppercase">Listado de sucursales</p>
           <div className="space-y-2">
-            {branches.map((b, i) => (
+            {displayBranches.map((b, i) => (
               <button key={i} onClick={() => {
-                setState({...state, selectedBranch: b.addr})
+                setState({...state, selectedBranch: b.addr, selectedBranchId: b.id})
                 navigate('card-address')
               }} className="w-full border rounded-lg p-3 text-left hover:border-red-600 transition">
                 <p className="font-semibold text-sm">{b.name}</p>
@@ -1386,7 +1582,39 @@ function App() {
             </div>
           ))}
 
-          <RedButton onClick={() => navigate('contract-efirma')}>Continuar</RedButton>
+          <RedButton disabled={apiLoading} onClick={async () => {
+            // Call Document Composer API to generate contract documents
+            setApiLoading(true)
+            const composeData = {
+              document: {
+                name: 'contrato_apertura_cuenta.pdf',
+                typeCode: 'CONTRACT',
+                mimeType: 'application/pdf',
+                template: { templateId: '22' },
+                metadata: {
+                  'Nombre Ejecutivo': 'Sistema Onboarding',
+                  'Sucursal': state.selectedBranchId || '0014',
+                  'Fecha': new Date().toISOString().split('T')[0],
+                  'Nombre Cliente': state.extractedName,
+                  'CURP': state.curp,
+                  'Producto': state.selectedProduct === 'empresarial' ? 'Paquete Empresarial' : 'Paquete Básico',
+                },
+                documentProperties: [
+                  { key: 'folio', value: `FOL-${Date.now()}` },
+                  { key: 'tipoOperacion', value: 'ALTA' },
+                  { key: 'usuario', value: 'onboarding-web' },
+                ],
+              },
+            }
+            try {
+              const res = await composeDocument(composeData)
+              logApi('contract-docs', 'POST /api/document-composer/compose', composeData, res)
+            } catch (err) {
+              logApi('contract-docs', 'POST /api/document-composer/compose', composeData, { error: String(err) })
+            }
+            setApiLoading(false)
+            navigate('contract-efirma')
+          }}>{apiLoading ? 'Generando contratos...' : 'Continuar'}</RedButton>
         </div>
       </Shell>
     )
@@ -1494,12 +1722,149 @@ function App() {
         <div className="p-5 space-y-6 flex flex-col items-center text-center pt-10">
           <CheckCircle2 className="w-16 h-16 text-green-600" />
           <h2 className="text-lg font-bold">Documentos firmados correctamente</h2>
-          <RedButton onClick={() => {
-            if (!scenarios.transmitOk) navigate('error-generic')
-            else if (scenarios.riskLevel === 'A2' || scenarios.riskLevel === 'A3') {
-              navigate('error-generic')
-            } else navigate('app-submitted')
-          }}>Continuar</RedButton>
+          <RedButton disabled={apiLoading} onClick={async () => {
+            if (!scenarios.transmitOk) { navigate('error-generic'); return }
+            if (scenarios.riskLevel === 'A2' || scenarios.riskLevel === 'A3') { navigate('error-generic'); return }
+
+            setApiLoading(true)
+            const nameParts = state.extractedName.split(' ')
+
+            // 1. Create Customer
+            const customerData = {
+              person: {
+                personName: { givenName: nameParts[0] || '', lastName: nameParts[1] || '', secondLastName: nameParts[2] || '' },
+                genderCode: state.extractedGender === 'Hombre' ? 'M' : 'F',
+                birthDate: state.extractedDob.split('/').reverse().join('-'),
+                placeOfBirth: { country: { code: '052' } },
+                countryOfResidence: { code: '052' },
+                firstNationality: { code: '052' },
+                civilStatusCode: 'S',
+                employmentInformation: { economicActivity: { code: '4611', description: 'Comercio al por menor' } },
+                documents: [{ documentTypeCode: 'CU', documentNumber: state.curp }],
+              },
+              structuralSegmentCode: 'PFAE',
+              bank: { bankId: '0014' },
+              contactPoints: [{
+                postalAddress: {
+                  streetTypeCode: 'CALLE', streetName: 'Reforma', streetBuildingIdentification: '123',
+                  postCodeIdentification: state.extractedPostalCode || '06600',
+                  state: { code: state.extractedState || '09' }, country: { code: '052' },
+                  townName: 'Ciudad de México', districtName: state.extractedDistrict || 'Juárez',
+                },
+                phoneAddress: { phoneNumber: state.phone, countryCode: '52' },
+              }],
+            }
+            try {
+              const custRes = await createCustomer(customerData)
+              logApi('contract-success', 'POST /api/customers', customerData, custRes)
+              const custId = (custRes as { customerId?: string })?.customerId || 'CID-001'
+              setState(prev => ({ ...prev, customerId: custId }))
+            } catch (err) {
+              logApi('contract-success', 'POST /api/customers', customerData, { error: String(err) })
+            }
+
+            // 2. Create Account
+            const accountData = {
+              baseCurrency: { code: 'MXP' },
+              center: { centerId: state.selectedBranchId || '0014' },
+              product: {
+                productCode: state.selectedProduct === 'empresarial' ? '06' : '07',
+                subproduct: { subproductId: '0014' },
+              },
+              contract: { participants: [{ participantId: state.customerId || 'CID-001', participantTypeCode: 'TIT' }] },
+              profileTypeCode: 'PFAE',
+              profileSubtypeCode: '01',
+            }
+            try {
+              const acctRes = await createAccount(accountData)
+              logApi('contract-success', 'POST /api/accounts', accountData, acctRes)
+              const acctId = (acctRes as { accountId?: string })?.accountId || 'ACCT-001'
+              setState(prev => ({ ...prev, accountId: acctId }))
+            } catch (err) {
+              logApi('contract-success', 'POST /api/accounts', accountData, { error: String(err) })
+            }
+
+            // 3. Create Card
+            const cardData = {
+              product: { productCode: state.selectedProduct === 'empresarial' ? '060014' : '070014' },
+              cardholder: { cardholderId: state.customerId || 'CID-001', contactPoints: [{ contactPointId: '001' }] },
+              associatedAccounts: [{ account: { accountId: state.accountId || 'ACCT-001', baseCurrency: { code: 'MXP' } } }],
+              contract: { center: { centerId: state.selectedBranchId || '0014' } },
+            }
+            try {
+              const cardRes = await createCard(cardData)
+              logApi('contract-success', 'POST /api/cards', cardData, cardRes)
+            } catch (err) {
+              logApi('contract-success', 'POST /api/cards', cardData, { error: String(err) })
+            }
+
+            // 4. KYC Risk Score
+            const kycData = {
+              currency: { code: 'MXP' },
+              Verification: { isVerificationSuccessful: true },
+              knowYourCustomerResolution: {
+                party: {
+                  bank: { bankId: '0014' },
+                  person: {
+                    personName: { givenName: nameParts[0] || '', lastName: nameParts[1] || '', secondLastName: nameParts[2] || '' },
+                    birthDate: state.extractedDob.split('/').reverse().join('-'),
+                    firstNationality: { code: '052' },
+                  },
+                  partyId: state.customerId || 'CID-001',
+                  contactPoint: {
+                    postalAddress: {
+                      postCodeIdentification: state.extractedPostalCode || '06600',
+                      state: { code: state.extractedState || '09' },
+                      country: { code: '052' },
+                    },
+                  },
+                },
+                products: [{ productCode: state.selectedProduct === 'empresarial' ? '06' : '07', subproductCode: '0014' }],
+                knowYourCustomerQuestionnaire: {
+                  questionnaireId: 'ONBOARDING-PJ-001',
+                  questions: [
+                    { questionId: 'SOURCE_FUNDS', answerId: state.sourceOfFunds || 'VENTAS' },
+                    { questionId: 'ACCOUNT_USAGE', answerId: state.accountUsage || 'OPERATIVO' },
+                  ],
+                },
+              },
+            }
+            try {
+              const kycRes = await calculateKycRiskScore(kycData)
+              logApi('contract-success', 'POST /api/kyc/risk-score', kycData, kycRes)
+            } catch (err) {
+              logApi('contract-success', 'POST /api/kyc/risk-score', kycData, { error: String(err) })
+            }
+
+            // 5. Unblock Channel Access
+            const channelData = { channel: { code: 'DIGITAL' }, block: { typeCode: 'NEW_ACCOUNT' } }
+            try {
+              const chRes = await unblockChannel(state.accountId || 'ACCT-001', channelData)
+              logApi('contract-success', 'POST /api/channel-access/:agreementId/unblock', channelData, chRes)
+            } catch (err) {
+              logApi('contract-success', 'POST /api/channel-access/:agreementId/unblock', channelData, { error: String(err) })
+            }
+
+            // 6. Customer Contact Points (register address)
+            const contactData = {
+              useTypes: [{ code: 'ALT' }],
+              postalAddress: {
+                streetTypeCode: 'CALLE', streetName: 'Reforma', streetBuildingIdentification: '123',
+                postCodeIdentification: state.extractedPostalCode || '06600',
+                state: { code: state.extractedState || '09' }, country: { code: '052' },
+                townName: 'Ciudad de México', districtName: state.extractedDistrict || 'Juárez',
+              },
+            }
+            try {
+              const cpRes = await createContactPoint(state.customerId || 'CID-001', contactData)
+              logApi('contract-success', 'POST /api/customer-contact-points/:customerId/contact-points', contactData, cpRes)
+            } catch (err) {
+              logApi('contract-success', 'POST /api/customer-contact-points/:customerId/contact-points', contactData, { error: String(err) })
+            }
+
+            setApiLoading(false)
+            navigate('app-submitted')
+          }}>{apiLoading ? 'Procesando alta...' : 'Continuar'}</RedButton>
         </div>
       </Shell>
     )
