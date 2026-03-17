@@ -25,6 +25,10 @@ export const config = {
   // Gateway
   hostGateway: requireEnv('HOST_GATEWAY'),
 
+  // Upstream API hosts
+  hostPre: process.env.HOST_PRE || 'https://intranetcore.pre.mx.corp',
+  hostDev: process.env.HOST_DEV || 'https://api18.dev.mx.corp:543',
+
   // Token config
   tokenAlg: requireEnv('TOKEN_ALG') as 'RS256',
   tokenType: requireEnv('TOKEN_TYPE'),
