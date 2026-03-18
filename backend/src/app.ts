@@ -48,47 +48,18 @@ app.use('/api/service-points', servicePointLocatorRoutes);
 app.use('/api/channel-access', channelAccessRoutes);
 app.use('/api/kyc', knowYourCustomerRoutes);
 
-// Root health check
-app.get('/', (_req, res) => {
-  res.json({
-    service: 'Onboarding Global Backend',
-    version: '2.0.0',
-    status: 'running',
-    endpoints: {
-      // Token
-      tokenGenerate: 'POST /api/token/generate',
-      tokenGenerateLocal: 'POST /api/token/generate-local',
-      tokenGenerateGestor: 'POST /api/token/generate-gestor',
-      publicKey: 'GET /api/token/public-key',
-      tokenHealth: 'GET /api/token/health',
-      // Onboarding APIs
-      watchlistScreening: 'POST /api/watchlist-screening/validate-status',
-      documentManagement: 'POST /api/document-management/upload',
-      documentComposer: 'POST /api/document-composer/compose',
-      beneficiaries: 'GET /api/beneficiaries/:accountId',
-      accountWarningBlocks: 'POST /api/account-warning-blocks/:accountId/warning-blocks',
-      countries: 'GET /api/countries',
-      accounts: 'POST /api/accounts',
-      administrativeGeographies: 'GET /api/administrative-geographies/districts',
-      cards: 'POST /api/cards',
-      customerContactPoints: 'POST /api/customer-contact-points/:customerId/contact-points',
-      customers: 'POST /api/customers',
-      economicActivities: 'POST /api/economic-activities/retrieve',
-      fraud: 'POST /api/fraud/evaluate',
-      partyParameters: 'GET /api/party-parameters/:parameterId',
-      servicePoints: 'POST /api/service-points/search-by-geolocation',
-      channelAccess: 'POST /api/channel-access/:agreementId/unblock',
-      kyc: 'POST /api/kyc/risk-score',
-    },
-  });
-});
-
 // Serve frontend static files (production mode)
 const frontendPath = path.join(__dirname, '..', '..', 'frontend');
 app.use(express.static(frontendPath));
 
+// Health check (only at /api/health so it doesn't conflict with frontend)
+app.get('/api/health', (_req, res) => {
+  res.json({ service: 'Onboarding Global Backend', version: '2.0.0', status: 'running' });
+});
+
 // SPA fallback: any non-API route serves index.html
-app.get(/^\/(?!api\/).*/, (_req, res) => {
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
   res.sendFile(path.join(frontendPath, 'index.html'));
 });
 
