@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 import axios from 'axios';
 import { config } from '../config/environment';
 import {
@@ -72,7 +72,7 @@ export async function fetchPublicKey(): Promise<PublicKeyResponse> {
  */
 function buildTokenPayload(sub?: string): TokenPayload {
   const currentTimestamp = Math.floor(Date.now() / 1000);
-  const jti = uuidv4();
+  const jti = crypto.randomUUID();
 
   return {
     cid_tp: config.apicClientId,
@@ -186,7 +186,7 @@ export async function generateGestorToken(
 
   const payload = buildGestorTokenPayload(sub);
   const signedJwt = signToken(payload);
-  const jti = uuidv4();
+  const jti = crypto.randomUUID();
 
   console.log(`[TokenService] Gestor token generated`);
 
