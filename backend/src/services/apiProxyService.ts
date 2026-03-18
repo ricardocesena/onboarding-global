@@ -1,6 +1,10 @@
 import axios, { AxiosRequestConfig, Method } from 'axios';
+import https from 'https';
 import { generateSignedTokenLocal } from './tokenService';
 import { config } from '../config/environment';
+
+// Accept self-signed / corporate CA certificates from Santander upstream APIs
+const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 /**
  * Common headers required by all Santander APIC APIs.
@@ -53,6 +57,7 @@ export async function proxyRequest(options: ProxyRequestOptions): Promise<ProxyR
     data: options.body,
     params: options.queryParams,
     timeout: 30000,
+    httpsAgent,
     validateStatus: () => true, // Don't throw on non-2xx
   };
 
