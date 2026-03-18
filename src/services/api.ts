@@ -6,6 +6,51 @@
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
+/* ─── Debug API Call Tracking ─── */
+
+export interface ApiCallRecord {
+  id: string;
+  timestamp: string;
+  screen: string;
+  method: string;
+  endpoint: string;
+  requestData: unknown;
+  responseData: unknown;
+  status: number;
+  duration: number;
+  error?: string;
+}
+
+type ApiCallListener = (calls: ApiCallRecord[]) => void;
+
+let _apiCalls: ApiCallRecord[] = [];
+let _listeners: ApiCallListener[] = [];
+let _currentScreen = '';
+
+export function setCurrentScreen(screen: string) {
+  _currentScreen = screen;
+}
+
+export function getApiCalls(): ApiCallRecord[] {
+  return _apiCalls;
+}
+
+export function subscribeToApiCalls(listener: ApiCallListener): () => void {
+  _listeners.push(listener);
+  return () => {
+    _listeners = _listeners.filter(l => l !== listener);
+  };
+}
+
+export function clearApiCalls() {
+  _apiCalls = [];
+  _listeners.forEach(l => l([..._apiCalls]));
+}
+
+function notifyListeners() {
+  _listeners.forEach(l => l([..._apiCalls]));
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const url = `${API_BASE}${path}`;
   console.log(`[API] ${method} ${url}`);
@@ -18,9 +63,43 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     opts.body = JSON.stringify(body);
   }
 
-  const res = await fetch(url, opts);
-  const data = await res.json();
-  return data as T;
+  const startTime = Date.now();
+  let status = 0;
+  let responseData: unknown = null;
+  let errorMsg: string | undefined;
+
+  try {
+    const res = await fetch(url, opts);
+    status = res.status;
+    responseData = await res.json();
+  } catch (err) {
+    errorMsg = String(err);
+    responseData = { error: errorMsg };
+  }
+
+  const duration = Date.now() - startTime;
+
+  const record: ApiCallRecord = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    timestamp: new Date().toISOString(),
+    screen: _currentScreen,
+    method,
+    endpoint: path,
+    requestData: body ?? null,
+    responseData,
+    status,
+    duration,
+    error: errorMsg,
+  };
+
+  _apiCalls.push(record);
+  notifyListeners();
+
+  if (errorMsg) {
+    throw new Error(errorMsg);
+  }
+
+  return responseData as T;
 }
 
 /* ─── Watchlist Screening ─── */
