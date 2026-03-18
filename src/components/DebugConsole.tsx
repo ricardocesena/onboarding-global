@@ -165,8 +165,8 @@ function ApiCallEntry({ call }: { call: ApiCallRecord }) {
         <span>{time}</span>
         <span className="bg-gray-100 px-1 py-0.5 rounded">{call.screen}</span>
       </div>
-      {call.requestData && <JsonBlock data={call.requestData} label="Request Body" />}
-      {call.responseData && <JsonBlock data={call.responseData} label="Response" />}
+      {call.requestData ? <JsonBlock data={call.requestData} label="Request Body" /> : null}
+      {call.responseData ? <JsonBlock data={call.responseData} label="Response" /> : null}
       {call.error && (
         <p className="text-[10px] text-red-600 mt-1">Error: {call.error}</p>
       )}

@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
 import tokenRoutes from './routes/tokenRoutes';
 import watchlistScreeningRoutes from './routes/watchlistScreeningRoutes';
 import documentManagementRoutes from './routes/documentManagementRoutes';
@@ -80,6 +81,15 @@ app.get('/', (_req, res) => {
       kyc: 'POST /api/kyc/risk-score',
     },
   });
+});
+
+// Serve frontend static files (production mode)
+const frontendPath = path.join(__dirname, '..', '..', 'frontend');
+app.use(express.static(frontendPath));
+
+// SPA fallback: any non-API route serves index.html
+app.get(/^\/(?!api\/).*/, (_req, res) => {
+  res.sendFile(path.join(frontendPath, 'index.html'));
 });
 
 // Global error handler

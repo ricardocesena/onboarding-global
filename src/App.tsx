@@ -337,6 +337,7 @@ function App() {
   const [economicResults, setEconomicResults] = useState<{code:string;description:string}[]>([])
   const [countryList, setCountryList] = useState<{code:string;name:string}[]>([])
   const [civilStatusList, setCivilStatusList] = useState<{code:string;description:string}[]>([])
+  void economicResults; void countryList; void civilStatusList
 
   // Helper to log API calls
   const logApi = useCallback((screen: string, api: string, data: unknown, response?: unknown) => {
