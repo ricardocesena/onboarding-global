@@ -21,7 +21,9 @@ import {
   unblockChannel,
   getCountries,
   getPartyParameters,
+  setCurrentScreen,
 } from './services/api'
+import DebugConsole from './components/DebugConsole'
 
 /* ─── Types ─── */
 type Screen =
@@ -335,6 +337,7 @@ function App() {
   const [economicResults, setEconomicResults] = useState<{code:string;description:string}[]>([])
   const [countryList, setCountryList] = useState<{code:string;name:string}[]>([])
   const [civilStatusList, setCivilStatusList] = useState<{code:string;description:string}[]>([])
+  void economicResults; void countryList; void civilStatusList
 
   // Helper to log API calls
   const logApi = useCallback((screen: string, api: string, data: unknown, response?: unknown) => {
@@ -345,6 +348,7 @@ function App() {
   const navigate = useCallback((next: Screen) => {
     setHistory(h => [...h, screen])
     setScreen(next)
+    setCurrentScreen(next)
   }, [screen])
 
   const goBack = useCallback(() => {
@@ -352,12 +356,14 @@ function App() {
       const prev = history[history.length - 1]
       setHistory(h => h.slice(0, -1))
       setScreen(prev)
+      setCurrentScreen(prev)
     }
   }, [history])
 
   const resetAll = useCallback(() => {
     setState(initialState)
     setScreen('cookies')
+    setCurrentScreen('cookies')
     setHistory([])
     setCurpAttempts(0)
     setIdvAttempts(0)
@@ -368,6 +374,11 @@ function App() {
   }, [])
 
   const currentStep = getStepIndex(screen)
+
+  // Set initial screen for debug console tracking
+  useEffect(() => {
+    setCurrentScreen('cookies')
+  }, [])
 
   // Load catalogs on mount: Countries + Party Parameters (civil_status)
   useEffect(() => {
@@ -1953,7 +1964,12 @@ function App() {
 
   return (
     <ShellCtx.Provider value={shellCtxValue}>
-      {renderScreen()}
+      <div className="flex min-h-screen">
+        <div className="flex-1">
+          {renderScreen()}
+        </div>
+        <DebugConsole currentScreen={screen} />
+      </div>
     </ShellCtx.Provider>
   )
 }

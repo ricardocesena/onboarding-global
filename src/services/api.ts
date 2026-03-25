@@ -4,7 +4,52 @@
  * forwarding the request to the upstream Santander APIC.
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+
+/* ─── Debug API Call Tracking ─── */
+
+export interface ApiCallRecord {
+  id: string;
+  timestamp: string;
+  screen: string;
+  method: string;
+  endpoint: string;
+  requestData: unknown;
+  responseData: unknown;
+  status: number;
+  duration: number;
+  error?: string;
+}
+
+type ApiCallListener = (calls: ApiCallRecord[]) => void;
+
+let _apiCalls: ApiCallRecord[] = [];
+let _listeners: ApiCallListener[] = [];
+let _currentScreen = '';
+
+export function setCurrentScreen(screen: string) {
+  _currentScreen = screen;
+}
+
+export function getApiCalls(): ApiCallRecord[] {
+  return _apiCalls;
+}
+
+export function subscribeToApiCalls(listener: ApiCallListener): () => void {
+  _listeners.push(listener);
+  return () => {
+    _listeners = _listeners.filter(l => l !== listener);
+  };
+}
+
+export function clearApiCalls() {
+  _apiCalls = [];
+  _listeners.forEach(l => l([..._apiCalls]));
+}
+
+function notifyListeners() {
+  _listeners.forEach(l => l([..._apiCalls]));
+}
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const url = `${API_BASE}${path}`;
@@ -18,9 +63,43 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     opts.body = JSON.stringify(body);
   }
 
-  const res = await fetch(url, opts);
-  const data = await res.json();
-  return data as T;
+  const startTime = Date.now();
+  let status = 0;
+  let responseData: unknown = null;
+  let errorMsg: string | undefined;
+
+  try {
+    const res = await fetch(url, opts);
+    status = res.status;
+    responseData = await res.json();
+  } catch (err) {
+    errorMsg = String(err);
+    responseData = { error: errorMsg };
+  }
+
+  const duration = Date.now() - startTime;
+
+  const record: ApiCallRecord = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    timestamp: new Date().toISOString(),
+    screen: _currentScreen,
+    method,
+    endpoint: path,
+    requestData: body ?? null,
+    responseData,
+    status,
+    duration,
+    error: errorMsg,
+  };
+
+  _apiCalls.push(record);
+  notifyListeners();
+
+  if (errorMsg) {
+    throw new Error(errorMsg);
+  }
+
+  return responseData as T;
 }
 
 /* ─── Watchlist Screening ─── */
@@ -58,7 +137,7 @@ export interface WatchlistScreeningRequest {
 }
 
 export function validateWatchlistScreening(data: WatchlistScreeningRequest) {
-  return request('/api/watchlist-screening/validate-status', 'POST', data);
+  return request('POST', '/api/watchlist-screening/validate-status', data);
 }
 
 /* ─── Fraud Evaluation ─── */
@@ -73,7 +152,7 @@ export interface FraudEvaluateRequest {
 }
 
 export function evaluateFraud(data: FraudEvaluateRequest) {
-  return request('/api/fraud/evaluate', 'POST', data);
+  return request('POST', '/api/fraud/evaluate', data);
 }
 
 /* ─── Economic Activities ─── */
@@ -85,7 +164,7 @@ export interface EconomicActivitiesRequest {
 }
 
 export function retrieveEconomicActivities(data: EconomicActivitiesRequest) {
-  return request('/api/economic-activities/retrieve', 'POST', data);
+  return request('POST', '/api/economic-activities/retrieve', data);
 }
 
 /* ─── Document Management ─── */
@@ -105,13 +184,13 @@ export interface DocumentUploadRequest {
 }
 
 export function uploadDocument(data: DocumentUploadRequest) {
-  return request('/api/document-management/upload', 'POST', data);
+  return request('POST', '/api/document-management/upload', data);
 }
 
 /* ─── Administrative Geographies ─── */
 
 export function getDistricts(countryCode: string, postCode: string) {
-  return request(`/api/administrative-geographies/districts?country_code=${countryCode}&post_code=${postCode}`, 'GET');
+  return request('GET', `/api/administrative-geographies/districts?country_code=${countryCode}&post_code=${postCode}`);
 }
 
 /* ─── Service Point Locator ─── */
@@ -129,7 +208,7 @@ export interface ServicePointSearchRequest {
 }
 
 export function searchServicePoints(data: ServicePointSearchRequest) {
-  return request('/api/service-points/search-by-geolocation', 'POST', data);
+  return request('POST', '/api/service-points/search-by-geolocation', data);
 }
 
 /* ─── Document Composer ─── */
@@ -146,7 +225,7 @@ export interface DocumentComposeRequest {
 }
 
 export function composeDocument(data: DocumentComposeRequest) {
-  return request('/api/document-composer/compose', 'POST', data);
+  return request('POST', '/api/document-composer/compose', data);
 }
 
 /* ─── Customers ─── */
@@ -192,7 +271,7 @@ export interface CreateCustomerRequest {
 }
 
 export function createCustomer(data: CreateCustomerRequest) {
-  return request('/api/customers', 'POST', data);
+  return request('POST', '/api/customers', data);
 }
 
 /* ─── Accounts ─── */
@@ -212,7 +291,7 @@ export interface CreateAccountRequest {
 }
 
 export function createAccount(data: CreateAccountRequest) {
-  return request('/api/accounts', 'POST', data);
+  return request('POST', '/api/accounts', data);
 }
 
 /* ─── Card Information ─── */
@@ -235,7 +314,7 @@ export interface CreateCardRequest {
 }
 
 export function createCard(data: CreateCardRequest) {
-  return request('/api/cards', 'POST', data);
+  return request('POST', '/api/cards', data);
 }
 
 /* ─── Customer Contact Points ─── */
@@ -257,7 +336,7 @@ export interface CreateContactPointRequest {
 }
 
 export function createContactPoint(customerId: string, data: CreateContactPointRequest) {
-  return request(`/api/customer-contact-points/${customerId}/contact-points`, 'POST', data);
+  return request('POST', `/api/customer-contact-points/${customerId}/contact-points`, data);
 }
 
 /* ─── KYC Risk Score ─── */
@@ -294,7 +373,7 @@ export interface KycRiskScoreRequest {
 }
 
 export function calculateKycRiskScore(data: KycRiskScoreRequest) {
-  return request('/api/kyc/risk-score', 'POST', data);
+  return request('POST', '/api/kyc/risk-score', data);
 }
 
 /* ─── Channel Access Agreement ─── */
@@ -305,7 +384,7 @@ export interface UnblockChannelRequest {
 }
 
 export function unblockChannel(agreementId: string, data: UnblockChannelRequest) {
-  return request(`/api/channel-access/${agreementId}/unblock`, 'POST', data);
+  return request('POST', `/api/channel-access/${agreementId}/unblock`, data);
 }
 
 /* ─── Account Warning Blocks ─── */
@@ -323,13 +402,13 @@ export interface AccountWarningBlockRequest {
 }
 
 export function createAccountWarningBlock(accountId: string, data: AccountWarningBlockRequest) {
-  return request(`/api/account-warning-blocks/${accountId}/warning-blocks`, 'POST', data);
+  return request('POST', `/api/account-warning-blocks/${accountId}/warning-blocks`, data);
 }
 
 /* ─── Beneficiaries ─── */
 
 export function getBeneficiaries(accountId: string) {
-  return request(`/api/beneficiaries/${accountId}`, 'GET');
+  return request('GET', `/api/beneficiaries/${accountId}`);
 }
 
 /* ─── Countries ─── */
@@ -340,11 +419,11 @@ export function getCountries(params?: { code?: string; iso_alpha2?: string; iso_
   if (params?.iso_alpha2) qs.set('iso_alpha2', params.iso_alpha2);
   if (params?.iso_alpha3) qs.set('iso_alpha3', params.iso_alpha3);
   const query = qs.toString() ? `?${qs.toString()}` : '';
-  return request(`/api/countries${query}`, 'GET');
+  return request('GET', `/api/countries${query}`);
 }
 
 /* ─── Party Parameters ─── */
 
 export function getPartyParameters(parameterId: string) {
-  return request(`/api/party-parameters/${parameterId}`, 'GET');
+  return request('GET', `/api/party-parameters/${parameterId}`);
 }
